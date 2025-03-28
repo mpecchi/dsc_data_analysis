@@ -1,0 +1,8 @@
+pyproject.toml
+src/dsc_data_analysis/__init__.py
+src/dsc_data_analysis/dsc.py
+src/dsc_data_analysis.egg-info/PKG-INFO
+src/dsc_data_analysis.egg-info/SOURCES.txt
+src/dsc_data_analysis.egg-info/dependency_links.txt
+src/dsc_data_analysis.egg-info/requires.txt
+src/dsc_data_analysis.egg-info/top_level.txt

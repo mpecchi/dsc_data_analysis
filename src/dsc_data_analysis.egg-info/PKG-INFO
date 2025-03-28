@@ -1,0 +1,22 @@
+Metadata-Version: 2.4
+Name: dsc_data_analysis
+Version: 0.0.1
+Summary: Tool for automatic analysis of multiple DSC results
+Author: Matteo Pecchi
+License: MIT
+Project-URL: Homepage, https://github.com/mpecchi/dsc_data_analysis
+Project-URL: Documentation, https://dsc-data-analysis.readthedocs.io/en/latest/
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.21.2
+Requires-Dist: pandas>=1.3.3
+Requires-Dist: matplotlib>=3.4.3
+Requires-Dist: seaborn>=0.11.2
+Requires-Dist: openpyxl
+Requires-Dist: pyarrow
+Requires-Dist: scipy>=1.7.1
+Requires-Dist: lmfit>=1.0.2
+Requires-Dist: myfigure>=1.0.0
