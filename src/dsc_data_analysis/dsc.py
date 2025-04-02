@@ -575,7 +575,7 @@ class Sample:
         if filenames is None:
             self.filenames = [
                 file.name.split(".")[0]
-                for file in list(self.folder_path.glob("**/*.txt"))[::-1]
+                for file in list(self.folder_path.glob(f"**/*{self.load_file_format}"))
                 if file.name.split("_")[0] == self.name
             ]
         else:
