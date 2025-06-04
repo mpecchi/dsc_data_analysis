@@ -26,6 +26,7 @@ class Project:
         temp_unit: Literal["C", "K"] = "C",
         temp_start_dsc: float = 50.1,
         isotherm_duration_min: float = 30,
+        isotherm_temp_c: float = 200.0,
         plot_font: Literal["Dejavu Sans", "Times New Roman"] = "Dejavu Sans",
         plot_grid: bool = False,
         auto_save_reports: bool = True,
@@ -41,6 +42,7 @@ class Project:
         self.temp_unit = temp_unit
         self.temp_start_dsc = temp_start_dsc
         self.isotherm_duration_min = isotherm_duration_min
+        self.isotherm_temp_c = isotherm_temp_c
         self.plot_font = plot_font
         self.plot_grid = plot_grid
         self.load_skiprows = load_skiprows
@@ -487,6 +489,7 @@ class Sample:
         load_file_format: Literal[".txt", ".csv", None] = None,
         load_separator: Literal["\t", ",", None] = None,
         load_encoding: str | None = None,
+        auto_load_files: bool = True,
     ):
         """
         Initialize a new Sample instance with parameters for TGA data analysis.
@@ -564,6 +567,10 @@ class Sample:
             self.isotherm_duration_min = project.isotherm_duration_min
         else:
             self.isotherm_duration_min = isotherm_duration_min
+        if isotherm_temp_c is None:
+            self.isotherm_temp_c = project.isotherm_temp_c
+        else:
+            self.isotherm_temp_c = isotherm_temp_c
         if ramp_rate_c_min is None:
             self.ramp_rate_c_min = project.ramp_rate_c_min
         else:
@@ -601,11 +608,10 @@ class Sample:
         self.cp_j_kgk: Measure = Measure(name="cp_j_kgk")
 
         # ramp
-        self.isotherm_temp_c = isotherm_temp_c
         self.duration_ramp_s = int(
             (self.isotherm_temp_c - self.temp_start_dsc) / self.ramp_rate_c_min * 60
         )
-        self.duration_ramp_isotherm_s = int(self.duration_ramp_s + isotherm_duration_min * 60)
+        self.duration_ramp_isotherm_s = int(self.duration_ramp_s + self.isotherm_duration_min * 60)
         self.time_ramp_s = Measure(name="time_ramp_s")
         self.time_ramp_min = Measure(name="time_ramp_min")
         self.temp_ramp_c = Measure(name="temp_ramp_c")
@@ -621,7 +627,7 @@ class Sample:
         self.temp_ramp_isotherm_c = Measure(name="temp_ramp_isotherm_c")
         self.dsc_ramp_isotherm_w_kg = Measure(name="dsc_ramp_isotherm_w_kg")
         self.cp_ramp_isotherm_j_kgk = Measure(name="cp_ramp_isotherm_j_kgk")
-
+        self.ramp_rate_calc = Measure(name="ramp_rate_calc_c_min")
         # deconvolution
         # self.dcv_best_fit: Measure = Measure(name="dcv_best_fit")
         # self.dcv_r2: Measure = Measure(name="dcv_r2")
@@ -635,9 +641,10 @@ class Sample:
         self.files_loaded = False
         self.data_loaded = False
         self.ramp_isotherm_computed = False
-        self.load_files()
-        self.data_loading()
-        self.compute_ramp_isotherm()
+        if auto_load_files:
+            self.load_files()
+            self.data_loading()
+            self.compute_ramp_isotherm()
 
     def _broadcast_value_prop(self, prop: list | str | float | int | bool) -> list:
         """
@@ -776,11 +783,15 @@ class Sample:
         for f, file in enumerate(self.files.values()):
             vect_idx_ramp_in[f] = np.where(self.temp.stk(f) > self.temp_start_dsc)[0][0]
             vect_idx_ramp_end[f] = np.where(self.temp.stk(f) > self.isotherm_temp_c * 0.98)[0][0]
-            vect_idx_isotherm_end[f] = (
-                len(self.temp.stk(f))
-                - np.where(self.temp.stk(f)[::-1] > self.isotherm_temp_c * 0.99)[0][0]
-                - 60
-            )
+            # vect_idx_isotherm_end[f] = (
+            #     len(self.temp.stk(f))
+            #     - np.where(self.temp.stk(f)[::-1] > self.isotherm_temp_c * 0.98)[0][0]
+            #     - 1
+            # )
+            vect_idx_isotherm_end[f] = np.where(
+                self.time_min.stk(f)
+                > self.time_min.stk(f)[int(vect_idx_ramp_end[f])] + self.isotherm_duration_min
+            )[0][0]
         self.idx_ramp_in = int(np.mean(vect_idx_ramp_in))
         self.idx_ramp_end = int(np.mean(vect_idx_ramp_end))
         self.idx_isotherm_end = int(np.mean(vect_idx_isotherm_end))
@@ -816,6 +827,9 @@ class Sample:
             self.dsc_ramp_isotherm_w_kg.add(
                 f,
                 self.dsc_w_kg.stk(f)[self.idx_ramp_in : self.idx_isotherm_end],
+            )
+            self.ramp_rate_calc.add(
+                f, np.mean(np.diff(self.temp_ramp_c.stk(f)) / np.diff(self.time_ramp_min.stk(f)))
             )
         self.ramp_isotherm_computed = True
 
