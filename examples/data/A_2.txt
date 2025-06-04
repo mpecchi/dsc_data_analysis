@@ -35,7 +35,7 @@
 #SEG. 4:200�C/00:30/200�C
 #SEG. 5:200�C/7.0(K/min)/50�C
 
-##Temp./�C;Time/min;DSC/(mW/mg);Gas Flow(purge2)/(ml/min);Gas Flow(protective)/(ml/min);Sensit./(uV/mW);Segment
+##Temp./C;Time/min;DSC/(mW/mg);Gas Flow(purge2)/(ml/min);Gas Flow(protective)/(ml/min);Sensit./(uV/mW);Segment
  37.38300; 0.00000;-1.510214e-002;50.00000;100.00000;2.79369;1
  37.38100; 0.01667;-1.509130e-002;50.00000;100.00000;2.79369;1
  37.37900; 0.03333;-1.508406e-002;50.00000;100.00000;2.79368;1

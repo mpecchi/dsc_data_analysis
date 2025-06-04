@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from typing import Literal, Any
 from myfigure.myfigure import MyFigure, colors, linestyles  # , letters, markers
+from . import qt
 
 
 class Project:
@@ -24,7 +25,7 @@ class Project:
         load_separator: Literal["\t", ","] = "\t",
         load_encoding: str | None = "utf-8",
         temp_unit: Literal["C", "K"] = "C",
-        temp_start_dsc: float = 50.1,
+        temp_start_dsc: float = 51.0,
         isotherm_duration_min: float = 30,
         isotherm_temp_c: float = 200.0,
         plot_font: Literal["Dejavu Sans", "Times New Roman"] = "Dejavu Sans",
@@ -608,10 +609,10 @@ class Sample:
         self.cp_j_kgk: Measure = Measure(name="cp_j_kgk")
 
         # ramp
-        self.duration_ramp_s = int(
-            (self.isotherm_temp_c - self.temp_start_dsc) / self.ramp_rate_c_min * 60
-        )
-        self.duration_ramp_isotherm_s = int(self.duration_ramp_s + self.isotherm_duration_min * 60)
+        # self.duration_ramp_s = int(
+        # (self.isotherm_temp_c - self.temp_start_dsc) / self.ramp_rate_c_min * 60
+        # )
+        # self.duration_ramp_isotherm_s = int(self.duration_ramp_s + self.isotherm_duration_min * 60)
         self.time_ramp_s = Measure(name="time_ramp_s")
         self.time_ramp_min = Measure(name="time_ramp_min")
         self.temp_ramp_c = Measure(name="temp_ramp_c")
