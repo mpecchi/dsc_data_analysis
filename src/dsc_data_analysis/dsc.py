@@ -4,7 +4,7 @@ import pathlib as plib
 import numpy as np
 import pandas as pd
 from typing import Literal, Any
-from myfigure.myfigure import MyFigure, colors, linestyles, letters, markers
+from myfigure.myfigure import MyFigure, colors, linestyles  # , letters, markers
 
 
 class Project:
