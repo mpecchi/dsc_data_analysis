@@ -8,6 +8,137 @@ from myfigure.myfigure import MyFigure, colors, linestyles  # , letters, markers
 from . import qt
 
 
+class MeasurePint:
+    """
+    A class to handle and analyze a series of measurements or data points. It provides functionalities
+    to add new data, compute averages, and calculate standard deviations, supporting the analysis
+    of replicated measurement data.
+    """
+
+    std_type: Literal["population", "sample"] = "population"
+    if std_type == "population":
+        np_ddof: int = 0
+    elif std_type == "sample":
+        np_ddof: int = 1
+
+    @classmethod
+    def set_std_type(cls, new_std_type: Literal["population", "sample"]):
+        """
+        Set the standard deviation type for all instances of Measure.
+
+        This class method configures whether the standard deviation calculation should be
+        performed as a sample standard deviation or a population standard deviation.
+
+        :param new_std_type: The type of standard deviation to use ('population' or 'sample').
+        :type new_std_type: Literal["population", "sample"]
+        """
+        cls.std_type = new_std_type
+        if new_std_type == "population":
+            cls.np_ddof: int = 0
+        elif new_std_type == "sample":
+            cls.np_ddof: int = 1
+
+    def __init__(self, unit, name: str | None = None):
+        """
+        Initialize a Measure object to store and analyze data.
+
+        :param name: An optional name for the Measure object, used for identification and reference in analyses.
+        :type name: str, optional
+        """
+        self.name = name
+        self.unit = unit
+        self._stk: list = []
+        self._ave: np.ndarray | float | None = None
+        self._std: np.ndarray | float | None = None
+
+    def __call__(self):
+        return self.ave()
+
+    def shape(self):
+        """
+        Return the (len of stk, len of ave)
+        """
+        return (len(self._stk), 1 if self._ave is None else len(self._ave))
+
+    def add(
+        self,
+        value: np.ndarray | pd.Series | float | int,
+        unit: str | None = None,
+    ) -> None:
+        """
+        Add a new data point or series of data points to the Measure object.
+
+        :param replicate: The identifier for the replicate to which the data belongs.
+        :type replicate: int
+        :param value: The data point(s) to be added. Can be a single value or a series of values.
+        :type value: np.ndarray | pd.Series | float | int
+        """
+        if unit is None:
+            unit = self.unit
+
+        if isinstance(value, (pd.Series, pd.DataFrame)):
+            value = value.to_numpy()
+        elif isinstance(value, np.ndarray):
+            value = value.flatten()
+        elif isinstance(value, (list, tuple)):
+            value = np.asarray(value)
+
+        self._stk.append(qt(value, unit).to(self.unit))
+
+    def stk(self, replicate: int | None = None) -> np.ndarray | float:
+        """
+        Retrieve the data points for a specific replicate or all data if no replicate is specified.
+
+        :param replicate: The identifier for the replicate whose data is to be retrieved. If None, data for all replicates is returned.
+        :type replicate: int, optional
+        :return: The data points for the specified replicate or all data.
+        :rtype: np.ndarray | float
+        """
+        if replicate is None:
+            return self._stk
+        else:
+            return self._stk[replicate]
+
+    def ave(self, to_unit: str = None) -> np.ndarray:
+        """
+        Calculate and return the average of the data points across all replicates.
+
+        :return: The average values for the data points.
+        :rtype: np.ndarray
+        """
+        if to_unit is None:
+            to_unit = self.unit
+        if all(isinstance(v.magnitude, np.ndarray) for v in self._stk):
+            # self._ave = np.mean(np.column_stack(self._stk), axis=1)
+            value = np.mean(np.column_stack([s.to(to_unit).magnitude for s in self._stk]), axis=1)
+
+        else:
+            value = np.mean([s.to(to_unit).magnitude for s in self._stk])
+
+        self._ave = qt(value, to_unit)
+        return self._ave
+
+    def std(self, to_unit: str = None) -> np.ndarray:
+        """
+        Calculate and return the standard deviation of the data points across all replicates.
+
+        :return: The standard deviation of the data points.
+        :rtype: np.ndarray
+        """
+        if to_unit is None:
+            to_unit = self.unit
+        if all(isinstance(v.magnitude, np.ndarray) for v in self._stk):
+            value = np.std(
+                np.column_stack([s.to(to_unit).magnitude for s in self._stk]),
+                axis=1,
+                ddof=MeasurePint.np_ddof,
+            )
+        else:
+            value = np.std([s.to(to_unit).magnitude for s in self._stk], ddof=MeasurePint.np_ddof)
+        self._std = qt(value, to_unit)
+        return self._std
+
+
 class Project:
     """
     Represents a project (identified by the folder where the data is stored)
@@ -19,11 +150,14 @@ class Project:
         self,
         folder_path: plib.Path | str,
         name: str | None = None,
-        column_name_mapping: dict[str, str] | None = None,
+        column_names: dict[str, str] | None = None,
+        column_units: dict[str, str] | None = None,
+        default_segments: dict[str, list[int]] | None = None,
         load_skiprows: int = 0,
         load_file_format: Literal[".txt", ".csv"] = ".txt",
         load_separator: Literal["\t", ","] = "\t",
         load_encoding: str | None = "utf-8",
+        units: dict[str, str] | None = None,
         temp_unit: Literal["C", "K"] = "C",
         temp_start_dsc: float = 51.0,
         isotherm_duration_min: float = 30,
@@ -40,6 +174,16 @@ class Project:
             self.name = self.folder_path.parts[-1]
         else:
             self.name = name
+        if units is None:
+            self.units = {
+                "temp": "degC",
+                "time": "min",
+                "dsc": "W/kg",
+                "cp": "J/(kg*K)",
+            }
+        else:
+            self.units = units
+
         self.temp_unit = temp_unit
         self.temp_start_dsc = temp_start_dsc
         self.isotherm_duration_min = isotherm_duration_min
@@ -60,15 +204,32 @@ class Project:
         self.dsc_label = "dsc [W/kg]"
         self.cp_label = "c$_p$ [W/kg*K]"
 
-        if column_name_mapping is None:
-            self.column_name_mapping = {
-                "##Temp./°C": "temp_c",
-                "Time/min": "time_min",
-                "DSC/(mW/mg)": "dsc_mW_mg",
+        if column_names is None:
+            self.column_names = {
+                "##Temp./°C": "temp",
+                "Time/min": "time",
+                "DSC/(mW/mg)": "dsc",
             }
         else:
-            self.column_name_mapping = column_name_mapping
-        #
+            self.column_names = column_names
+
+        if column_units is None:
+            self.column_units = {
+                "temp": "degC",
+                "time": "min",
+                "dsc": "W/g",
+            }
+        else:
+            self.column_units = column_units
+
+        if default_segments is None:
+            self.default_segments = {
+                "temp": None,
+                "dsc": [2, 3],
+                "cp": [2],
+            }
+        else:
+            self.default_segments = default_segments
         self.samples: dict[str, Sample] = {}
         self.samplenames: list[str] = []
 
@@ -150,6 +311,221 @@ class Project:
                 filename = filename + ".xlsx"
             report.to_excel(plib.Path(out_path, filename))
         return report
+
+    def plot_segments(
+        self,
+        filename: str = "",
+        samples: list[Sample] | None = None,
+        labels: list[str] | None = None,
+        x_param: Literal["time", "temp"] = "temp",
+        y_param: Literal["temp", "dsc", "cp"] = "dsc",
+        segments: list[int] | None = None,
+        **kwargs: dict,
+    ) -> MyFigure:
+        """ """
+        if samples is None:
+            samples = list(self.samples.values())
+
+        samplenames = [sample.name for sample in samples]
+        if labels is None:
+            try:
+                labels = [sample.label for sample in samples]
+            except AttributeError:
+                labels = samplenames
+        for sample in samples:
+            if not sample.data_loaded:
+                sample.data_loadingPint()
+        out_path = plib.Path(self.out_path, "single_sample_plots")
+        out_path.mkdir(parents=True, exist_ok=True)
+
+        if x_param == "time":
+            x_lab = f"time [{self.units['time']}]"
+        elif x_param == "temp":
+            x_lab = f"T [{self.temp_symbol}]"
+        else:
+            raise ValueError(f"{x_param} is not a valid x_param option. Use 'time' or 'temp'.")
+        if y_param == "temp":
+            y_lab = f"T [{self.temp_symbol}]"
+        elif y_param == "dsc":
+            y_lab = f"dsc [{self.units['dsc']}]"
+        elif y_param == "cp":
+            y_lab = f"cp [{self.units['cp']}]"
+        else:
+            raise ValueError(
+                f"{y_param} is not a valid y_param option. Use 'temp', 'dsc', or 'cp'."
+            )
+        default_kwargs = {
+            "filename": y_param + x_param + filename,
+            "out_path": out_path,
+            "height": 5,
+            "width": 5,
+            "x_lab": x_lab,
+            "y_lab": y_lab,
+            "grid": self.plot_grid,
+            "text_font": self.plot_font,
+        }
+        # Update kwargs with the default key-value pairs if the key is not present in kwargs
+        kwargs = {**default_kwargs, **kwargs}
+
+        mf = MyFigure(
+            rows=1,
+            cols=1,
+            **kwargs,
+        )
+        # Plot 0: Full time and temperature
+        for s, sample in enumerate(samples):
+            if x_param == "time":
+                x_data = sample.time
+            elif x_param == "temp":
+                x_data = sample.temp
+            else:
+                raise ValueError(f"{x_param} is not a valid x_param option. Use 'time' or 'temp'.")
+            if y_param == "temp":
+                y_data = sample.temp
+            elif y_param == "dsc":
+                y_data = sample.dsc
+            elif y_param == "cp":
+                y_data = sample.cp
+            else:
+                raise ValueError(
+                    f"{y_param} is not a valid y_param option. Use 'temp', 'dsc', or 'cp'."
+                )
+            mf.axs[0].plot(
+                x_data.ave().magnitude[sample.slice_from_segments(segments)],
+                y_data.ave().magnitude[sample.slice_from_segments(segments)],
+                color=colors[s],
+                linestyle=linestyles[s],
+                label=sample.name if labels is None else labels[s],
+            )
+            mf.axs[0].fill_between(
+                x_data.ave().magnitude[sample.slice_from_segments(segments)],
+                y_data.ave().magnitude[sample.slice_from_segments(segments)]
+                - y_data.std().magnitude[sample.slice_from_segments(segments)],
+                y_data.ave().magnitude[sample.slice_from_segments(segments)]
+                + y_data.std().magnitude[sample.slice_from_segments(segments)],
+                color=colors[s],
+                alpha=0.2,
+            )
+
+        mf.save_figure()
+        return mf
+
+    def plot_all(
+        self,
+        filename: str = "",
+        samples: list[Sample] | None = None,
+        labels: list[str] | None = None,
+        temp_segments: list[int] | None = None,
+        dsc_segments: list[int] | None = None,
+        cp_segments: list[int] | None = None,
+        **kwargs: dict[str, Any],
+    ) -> MyFigure:
+        """ """
+        if samples is None:
+            samples = list(self.samples.values())
+
+        samplenames = [sample.name for sample in samples]
+        if labels is None:
+            try:
+                labels = [sample.label for sample in samples]
+            except AttributeError:
+                labels = samplenames
+        for sample in samples:
+            if not sample.data_loaded:
+                sample.data_loadingPint()
+
+        out_path = plib.Path(self.out_path, "multisample_plots")
+        out_path.mkdir(parents=True, exist_ok=True)
+
+        if temp_segments is None:
+            temp_segments = self.default_segments["temp"]
+        if dsc_segments is None:
+            dsc_segments = self.default_segments["dsc"]
+        if cp_segments is None:
+            cp_segments = self.default_segments["cp"]
+
+        default_kwargs = {
+            "filename": self.name + "_all" + filename,
+            "out_path": out_path,
+            "height": 8,
+            "width": 5,
+            "x_lab": [f"time [{self.units['time']}]"] * 2 + [f"T [{self.temp_symbol}]"],
+            "y_lab": [
+                f"T [{self.temp_symbol}]",
+                f"dsc [{self.units['dsc']}]",
+                f"cp [{self.units['cp']}]",
+            ],
+            "grid": self.plot_grid,
+            "text_font": self.plot_font,
+        }
+        # Update kwargs with the default key-value pairs if the key is not present in kwargs
+        kwargs = {**default_kwargs, **kwargs}
+
+        mf = MyFigure(
+            rows=3,
+            cols=1,
+            **kwargs,
+        )
+
+        # Plot 0: Temperature vs time
+        for s, sample in enumerate(samples):
+            mf.axs[0].plot(
+                sample.time.ave().magnitude[sample.slice_from_segments(temp_segments)],
+                sample.temp.ave().magnitude[sample.slice_from_segments(temp_segments)],
+                color=colors[s],
+                linestyle=linestyles[s],
+                label=sample.name if labels is None else labels[s],
+            )
+            mf.axs[0].fill_between(
+                sample.time.ave().magnitude[sample.slice_from_segments(temp_segments)],
+                sample.temp.ave().magnitude[sample.slice_from_segments(temp_segments)]
+                - sample.temp.std().magnitude[sample.slice_from_segments(temp_segments)],
+                sample.temp.ave().magnitude[sample.slice_from_segments(temp_segments)]
+                + sample.temp.std().magnitude[sample.slice_from_segments(temp_segments)],
+                color=colors[s],
+                alpha=0.2,
+            )
+
+        # Plot 1: DSC vs time
+        for s, sample in enumerate(samples):
+            mf.axs[1].plot(
+                sample.time.ave().magnitude[sample.slice_from_segments(dsc_segments)],
+                sample.dsc.ave().magnitude[sample.slice_from_segments(dsc_segments)],
+                color=colors[s],
+                linestyle=linestyles[s],
+                label=sample.name if labels is None else labels[s],
+            )
+            mf.axs[1].fill_between(
+                sample.time.ave().magnitude[sample.slice_from_segments(dsc_segments)],
+                sample.dsc.ave().magnitude[sample.slice_from_segments(dsc_segments)]
+                - sample.dsc.std().magnitude[sample.slice_from_segments(dsc_segments)],
+                sample.dsc.ave().magnitude[sample.slice_from_segments(dsc_segments)]
+                + sample.dsc.std().magnitude[sample.slice_from_segments(dsc_segments)],
+                color=colors[s],
+                alpha=0.2,
+            )
+
+        # Plot 2: Cp vs temperature
+        for s, sample in enumerate(samples):
+            mf.axs[2].plot(
+                sample.temp.ave().magnitude[sample.slice_from_segments(cp_segments)],
+                sample.cp.ave().magnitude[sample.slice_from_segments(cp_segments)],
+                color=colors[s],
+                linestyle=linestyles[s],
+                label=sample.name if labels is None else labels[s],
+            )
+            mf.axs[2].fill_between(
+                sample.temp.ave().magnitude[sample.slice_from_segments(cp_segments)],
+                sample.cp.ave().magnitude[sample.slice_from_segments(cp_segments)]
+                - sample.cp.std().magnitude[sample.slice_from_segments(cp_segments)],
+                sample.cp.ave().magnitude[sample.slice_from_segments(cp_segments)]
+                + sample.cp.std().magnitude[sample.slice_from_segments(cp_segments)],
+                color=colors[s],
+                alpha=0.2,
+            )
+
+        mf.save_figure()
+        return mf
 
     def plot_multi_dsc_ramp_isotherm(
         self,
@@ -485,7 +861,8 @@ class Sample:
         temp_start_dsc: float | None = None,
         label: str | None = None,
         folder_path: plib.Path | None = None,
-        column_name_mapping: dict[str:str] | None = None,
+        column_names: dict[str:str] | None = None,
+        column_units: dict[str:str] | None = None,
         load_skiprows: int | None = None,
         load_file_format: Literal[".txt", ".csv", None] = None,
         load_separator: Literal["\t", ",", None] = None,
@@ -509,8 +886,8 @@ class Sample:
         :type correct_ash_mg: list[float], optional
         :param correct_ash_fr: A list of ash correction values as a fraction, one per file.
         :type correct_ash_fr: list[float], optional
-        :param column_name_mapping: A dictionary mapping file column names to standardized column names for analysis.
-        :type column_name_mapping: dict[str, str], optional
+        :param column_names: A dictionary mapping file column names to standardized column names for analysis.
+        :type column_names: dict[str, str], optional
         :param load_skiprows: The number of rows to skip at the beginning of the files when loading.
         :type load_skiprows: int
         :param time_moist: The time considered for the moisture analysis.
@@ -529,10 +906,12 @@ class Sample:
         project.add_sample(name, self)
 
         self.out_path = project.out_path
+        self.units = project.units
         self.temp_unit = project.temp_unit
         self.temp_symbol = project.temp_symbol
         self.dsc_label = project.dsc_label
         self.cp_label = project.cp_label
+        self.default_segments = project.default_segments
         self.plot_font = project.plot_font
         self.plot_grid = project.plot_grid
         self.auto_save_reports = project.auto_save_reports
@@ -540,10 +919,16 @@ class Sample:
             self.folder_path = project.folder_path
         else:
             self.folder_path = folder_path
-        if column_name_mapping is None:
-            self.column_name_mapping = project.column_name_mapping
+        if column_names is None:
+            self.column_names = project.column_names
         else:
-            self.column_name_mapping = column_name_mapping
+            self.column_names = column_names
+
+        if column_units is None:
+            self.column_units = project.column_units
+        else:
+            self.column_units = column_units
+
         if load_skiprows is None:
             self.load_skiprows = project.load_skiprows
         else:
@@ -601,7 +986,13 @@ class Sample:
         self.len_files: dict[str : pd.DataFrame] = {}
         self.len_sample: int = 0
 
-        self.temp: Measure = Measure(name="temp_" + self.temp_unit)
+        self.temp: MeasurePint = MeasurePint(name="temp", unit=self.units["temp"])
+        self.time: MeasurePint = MeasurePint(name="time", unit=self.units["time"])
+        self.dsc: MeasurePint = MeasurePint(name="dsc", unit=self.units["dsc"])
+        self.cp: MeasurePint = MeasurePint(name="cp", unit=self.units["cp"])
+        self.segment: MeasurePint = MeasurePint(name="segment", unit="")
+
+        self.temp_u: Measure = Measure(name="temp_" + self.temp_unit)
         self.time_s: Measure = Measure(name="time_s")
         self.time_min: Measure = Measure(name="time_min")
         self.dsc_w_kg: Measure = Measure(name="dsc_w_kg")
@@ -647,34 +1038,6 @@ class Sample:
             self.data_loading()
             self.compute_ramp_isotherm()
 
-    def _broadcast_value_prop(self, prop: list | str | float | int | bool) -> list:
-        """
-        Broadcast a single value or a list of values to match the number of replicates.
-
-        This method is used internally to ensure that properties like corrections have a value
-        for each replicate, even if a single value is provided for all.
-
-        :param prop: A single value or a list of values to be broadcasted.
-        :type prop: list | float | int | bool
-        :return: A list of values with length equal to the number of replicates.
-        :rtype: list
-        """
-        if prop is None:
-            broad_prop = [None] * self.n_repl
-        elif isinstance(prop, (list, tuple)):
-            # If it's a list or tuple, but we're not expecting pairs, it's a single value per axis.
-            if len(prop) == self.n_repl:
-                broad_prop = prop
-            else:
-                raise ValueError(
-                    f"The size of the property '{prop}' does not match the number of replicates."
-                )
-        elif isinstance(prop, (str, float, int, bool)):
-            broad_prop = [prop] * self.n_repl
-        else:
-            raise ValueError(f"Invalid property type: {type(prop)}")
-        return broad_prop
-
     def load_single_file(
         self,
         filename: str,
@@ -683,7 +1046,7 @@ class Sample:
         load_file_format: Literal[".txt", ".csv", None] = None,
         load_separator: Literal["\t", ",", None] = None,
         load_encoding: str | None = None,
-        column_name_mapping: dict | None = None,
+        column_names: dict | None = None,
     ) -> pd.DataFrame:
         """
         Load data from a single file associated with the sample.
@@ -694,13 +1057,13 @@ class Sample:
         :type folder_path: plib.Path, optional
         :param load_skiprows: The number of rows to skip at the beginning of the file. If None, uses the sample's default.
         :type load_skiprows: int, optional
-        :param column_name_mapping: A mapping of file column names to standardized column names. If None, uses the sample's default.
-        :type column_name_mapping: dict, optional
+        :param column_names: A mapping of file column names to standardized column names. If None, uses the sample's default.
+        :type column_names: dict, optional
         :return: The loaded data as a pandas DataFrame.
         :rtype: pd.DataFrame
         """
-        if column_name_mapping is None:
-            column_name_mapping = self.column_name_mapping
+        if column_names is None:
+            column_names = self.column_names
         if folder_path is None:
             folder_path = self.folder_path
         if load_skiprows is None:
@@ -718,7 +1081,7 @@ class Sample:
             skiprows=load_skiprows,
             encoding=load_encoding,
         )
-        file = file.rename(columns={col: column_name_mapping.get(col, col) for col in file.columns})
+        file = file.rename(columns={col: column_names.get(col, col) for col in file.columns})
         for column in file.columns:
             file[column] = pd.to_numeric(file[column], errors="coerce")
         file.dropna(inplace=True)
@@ -736,7 +1099,7 @@ class Sample:
         """
         print("\n" + self.name)
         # import files and makes sure that replicates have the same size
-        for f, filename in enumerate(self.filenames):
+        for filename in self.filenames:
             print("\t" + filename)
             file = self.load_single_file(filename)
             self.files[filename] = file
@@ -747,6 +1110,277 @@ class Sample:
             self.files[filename] = self.files[filename].head(self.len_sample)
         self.files_loaded = True  # Flag to track if data is loaded
         return self.files
+
+    def indexes_from_segments(self):
+        """
+        Extract segment start indices from loaded data files.
+
+        This method finds the starting index of each segment in the data files,
+        where segments represent different phases of the DSC experiment (ramp, isotherm, etc.).
+        The results are averaged across all replicates for each segment.
+        """
+        if not self.files_loaded:
+            self.load_files()
+
+        # get the maximum number of segments from the first file
+        # assuming all files have the same number of segments
+        first_file = list(self.files.values())[0]
+        self.n_segments = int(max(first_file["segment"].values))
+
+        # get the indexes for the start of each segment for each file and average for each file (on each segment)
+        list_idxs = []
+        for file in self.files.values():
+            # get the indexes for the start of each segment
+            idxs = []
+            for segment in range(1, self.n_segments + 1):
+                # find the first occurrence of this segment number
+                segment_end_idx = file[file["segment"] == segment].index[-1]
+                idxs.append(segment_end_idx)
+            list_idxs.append(idxs)
+
+        # average the indices across all files for each segment
+        self.segment_idxs = np.mean(list_idxs, axis=0).astype(int)
+
+    def data_loadingPint(self):
+        """
+        Perform proximate analysis on the loaded data for the sample.
+
+        This analysis calculates moisture content, ash content, volatile matter, and fixed carbon
+        based on the thermogravimetric data. The results are stored in the instance's attributes for later use.
+        """
+        if not self.files_loaded:
+            self.load_files()
+        for file in self.files.values():
+            self.temp.add(file["temp"].values, unit=self.column_units["temp"])
+            self.time.add(file["time"].values, unit=self.column_units["time"])
+            self.dsc.add(file["dsc"].values, unit=self.column_units["dsc"])
+            cp_j_kgk = qt(file["dsc"].values, self.column_units["dsc"]) / qt(
+                np.ones(self.len_sample) * self.ramp_rate_c_min, "K/min"
+            )
+            self.cp.add(cp_j_kgk.to(self.units["cp"]).magnitude, unit=self.units["cp"])
+
+        # get the average value of the index # for the ramp start, ramp end and isotherm end
+        # based on the segment number
+
+        self.data_loaded = True
+
+    def slice_from_segments(self, segments: list[int] | int | None = None):
+
+        if segments is None:
+            segments = list(range(1, self.n_segments))
+        elif isinstance(segments, int):
+            segments = [segments]
+        idx0 = self.segment_idxs[segments[0] - 1]
+        idx1 = self.segment_idxs[segments[-1]]
+        return slice(idx0, idx1)
+
+    def compute_cp_equation(
+        self,
+        segments: list[int] | None = None,
+        temp_lims: tuple[float, float] | None = None,
+        equation_order: int = 0,
+        print_fit: bool = True,
+        plot_fit: bool = False,
+    ):
+        if segments is None:
+            segments = self.default_segments["cp"]
+        if temp_lims is None:
+            temp_lims = [80, 200]
+
+        x = self.temp.ave().magnitude[self.slice_from_segments(segments)]
+        y = self.cp.ave().magnitude[self.slice_from_segments(segments)]
+        y_std = self.cp.std().magnitude[self.slice_from_segments(segments)]
+        # cut the data to the specified temperature limits
+        mask = (x >= temp_lims[0]) & (x <= temp_lims[1])
+        x = x[mask]
+        y = y[mask]
+        y_std = y_std[mask]
+
+        # compute polynomial coefficients for the average
+        coeffs = np.polyfit(x, y, equation_order)
+        coeffs_std = np.polyfit(x, y_std, equation_order)
+
+        if print_fit:
+            print(f"Polynomial coefficients for order {equation_order}: {coeffs}")
+            print(f"Polynomial coefficients for standard deviation: {coeffs_std}")
+
+        if plot_fit:
+            # create a range of temperatures for plotting the fit
+            x_fit = np.linspace(temp_lims[0], temp_lims[1], 100)
+            y_fit = np.polyval(coeffs, x_fit)
+            y_fit_std = np.polyval(coeffs_std, x_fit)
+
+            # Create plot using the project style
+            out_path = self.out_path / "cp_fits"
+            out_path.mkdir(parents=True, exist_ok=True)
+
+            default_kwargs = {
+                "filename": f"cp_fit_order_{equation_order}",
+                "out_path": out_path,
+                "height": 5,
+                "width": 5,
+                "x_lab": f"T [{self.temp_symbol}]",
+                "y_lab": f"cp [{self.units['cp']}]",
+                "grid": self.plot_grid,
+                "text_font": self.plot_font,
+            }
+
+            mf = MyFigure(rows=1, cols=1, **default_kwargs)
+
+            mf.axs[0].plot(x, y, linestyle=linestyles[0], color=colors[0], label="cp (exp)")
+            mf.axs[0].fill_between(x, y - y_std, y + y_std, color=colors[0], alpha=0.2)
+            mf.axs[0].plot(x_fit, y_fit, linestyle=linestyles[1], color=colors[1], label="cp (fit)")
+            mf.axs[0].fill_between(
+                x_fit, y_fit - y_fit_std, y_fit + y_fit_std, color=colors[1], alpha=0.2
+            )
+
+            mf.save_figure()
+
+        return coeffs, coeffs_std
+
+    def plot_segments(
+        self,
+        x_param: Literal["time", "temp"] = "temp",
+        y_param: Literal["temp", "dsc", "cp"] = "dsc",
+        segments: list[int] | None = None,
+        filename: str = "",
+        **kwargs: dict,
+    ) -> MyFigure:
+        """ """
+        if not self.data_loaded:
+            self.data_loadingPint()
+        out_path = plib.Path(self.out_path, "single_sample_plots")
+        out_path.mkdir(parents=True, exist_ok=True)
+
+        if x_param == "time":
+            x_data = self.time
+            x_lab = f"time [{self.units['time']}]"
+        elif x_param == "temp":
+            x_data = self.temp
+            x_lab = f"T [{self.temp_symbol}]"
+        else:
+            raise ValueError(f"{x_param} is not a valid x_param option. Use 'time' or 'temp'.")
+        if y_param == "temp":
+            y_data = self.temp
+            y_lab = f"T [{self.temp_symbol}]"
+        elif y_param == "dsc":
+            y_data = self.dsc
+            y_lab = f"dsc [{self.units['dsc']}]"
+        elif y_param == "cp":
+            y_data = self.cp
+            y_lab = f"cp [{self.units['cp']}]"
+        else:
+            raise ValueError(
+                f"{y_param} is not a valid y_param option. Use 'temp', 'dsc', or 'cp'."
+            )
+
+        default_kwargs = {
+            "filename": y_param + x_param + filename,
+            "out_path": out_path,
+            "height": 5,
+            "width": 5,
+            "x_lab": x_lab,
+            "y_lab": y_lab,
+            "grid": self.plot_grid,
+            "text_font": self.plot_font,
+        }
+        # Update kwargs with the default key-value pairs if the key is not present in kwargs
+        kwargs = {**default_kwargs, **kwargs}
+
+        mf = MyFigure(
+            rows=1,
+            cols=1,
+            **kwargs,
+        )
+        # Plot 0: Full time and temperature
+        for f in range(self.n_repl):
+            mf.axs[0].plot(
+                x_data.stk(f).magnitude[self.slice_from_segments(segments)],
+                y_data.stk(f).magnitude[self.slice_from_segments(segments)],
+                color=colors[f],
+                linestyle=linestyles[f],
+                label=self.filenames[f],
+            )
+        mf.axs[0].legend()
+
+        mf.save_figure()
+        return mf
+
+    def plot_all(
+        self,
+        temp_segments: list[int] | None = None,
+        dsc_segments: list[int] | None = None,
+        cp_segments: list[int] | None = None,
+        filename: str = "",
+        **kwargs: dict[str, Any],
+    ) -> MyFigure:
+        """ """
+        if not self.data_loaded:
+            self.data_loading()
+        out_path = plib.Path(self.out_path, "single_sample_plots")
+        out_path.mkdir(parents=True, exist_ok=True)
+
+        if temp_segments is None:
+            temp_segments = self.default_segments["temp"]
+        if dsc_segments is None:
+            dsc_segments = self.default_segments["dsc"]
+        if cp_segments is None:
+            cp_segments = self.default_segments["cp"]
+
+        default_kwargs = {
+            "filename": self.name + "_dsc_all" + filename,
+            "out_path": out_path,
+            "height": 8,
+            "width": 5,
+            "x_lab": [f"time [{self.units['time']}]"] * 3,
+            "y_lab": [
+                f"T [{self.temp_symbol}]",
+                f"dsc [{self.units['dsc']}]",
+                f"cp [{self.units['cp']}]",
+            ],
+            "grid": self.plot_grid,
+            "text_font": self.plot_font,
+        }
+        # Update kwargs with the default key-value pairs if the key is not present in kwargs
+        kwargs = {**default_kwargs, **kwargs}
+
+        mf = MyFigure(
+            rows=3,
+            cols=1,
+            **kwargs,
+        )
+        # Plot 0: Full time and temperature
+        for f in range(self.n_repl):
+            mf.axs[0].plot(
+                self.time.stk(f).magnitude[self.slice_from_segments(temp_segments)],
+                self.temp.stk(f).magnitude[self.slice_from_segments(temp_segments)],
+                color=colors[f],
+                linestyle=linestyles[f],
+                label=self.filenames[f],
+            )
+
+        # Plot 1: Full time and dsc signal
+        for f in range(self.n_repl):
+            mf.axs[1].plot(
+                self.time.stk(f).magnitude[self.slice_from_segments(dsc_segments)],
+                self.dsc.stk(f).magnitude[self.slice_from_segments(dsc_segments)],
+                color=colors[f],
+                linestyle=linestyles[f],
+                label=self.filenames[f],
+            )
+
+        # Plot 2: Ramp + isotherm dsc
+        for f in range(self.n_repl):
+            mf.axs[2].plot(
+                self.temp.stk(f)[self.slice_from_segments(cp_segments)],
+                self.cp.stk(f)[self.slice_from_segments(cp_segments)],
+                color=colors[f],
+                linestyle=linestyles[f],
+                label=self.filenames[f],
+            )
+
+        mf.save_figure()
+        return mf
 
     def data_loading(self):
         """
@@ -760,9 +1394,9 @@ class Sample:
 
         for f, file in enumerate(self.files.values()):
             if self.temp_unit == "C":
-                self.temp.add(f, file["temp_c"])
+                self.temp_u.add(f, file["temp_c"])
             elif self.temp_unit == "K":
-                self.temp.add(f, file["temp_k"])
+                self.temp_u.add(f, file["temp_k"])
             try:
                 self.time_min.add(f, file["time_min"])
                 self.time_s.add(f, file["time_min"] * 60)
@@ -782,11 +1416,11 @@ class Sample:
         vect_idx_ramp_end = np.zeros(self.n_repl)
         vect_idx_isotherm_end = np.zeros(self.n_repl)
         for f, file in enumerate(self.files.values()):
-            vect_idx_ramp_in[f] = np.where(self.temp.stk(f) > self.temp_start_dsc)[0][0]
-            vect_idx_ramp_end[f] = np.where(self.temp.stk(f) > self.isotherm_temp_c * 0.98)[0][0]
+            vect_idx_ramp_in[f] = np.where(self.temp_u.stk(f) > self.temp_start_dsc)[0][0]
+            vect_idx_ramp_end[f] = np.where(self.temp_u.stk(f) > self.isotherm_temp_c * 0.98)[0][0]
             # vect_idx_isotherm_end[f] = (
-            #     len(self.temp.stk(f))
-            #     - np.where(self.temp.stk(f)[::-1] > self.isotherm_temp_c * 0.98)[0][0]
+            #     len(self.temp_u.stk(f))
+            #     - np.where(self.temp_u.stk(f)[::-1] > self.isotherm_temp_c * 0.98)[0][0]
             #     - 1
             # )
             vect_idx_isotherm_end[f] = np.where(
@@ -805,7 +1439,7 @@ class Sample:
                 - self.time_s.stk(f)[self.idx_ramp_in],
             )
             self.time_ramp_min.add(f, self.time_ramp_s.stk(f) / 60)
-            self.temp_ramp_c.add(f, self.temp.stk(f)[self.idx_ramp_in : self.idx_ramp_end])
+            self.temp_ramp_c.add(f, self.temp_u.stk(f)[self.idx_ramp_in : self.idx_ramp_end])
             self.dsc_ramp_w_kg.add(
                 f,
                 self.dsc_w_kg.stk(f)[self.idx_ramp_in : self.idx_ramp_end],
@@ -823,7 +1457,7 @@ class Sample:
             )
             self.temp_ramp_isotherm_c.add(
                 f,
-                self.temp.stk(f)[self.idx_ramp_in : self.idx_isotherm_end],
+                self.temp_u.stk(f)[self.idx_ramp_in : self.idx_isotherm_end],
             )
             self.dsc_ramp_isotherm_w_kg.add(
                 f,
@@ -890,9 +1524,6 @@ class Sample:
             myfig.save_figure()
             return self.cp_ave_j_kgk
 
-    def _find_indexes_in_replicates(self):
-        pass
-
     def plot_dsc_full(self, **kwargs: dict[str, Any]) -> MyFigure:
         """ """
         if not self.data_loaded:
@@ -927,7 +1558,7 @@ class Sample:
         for f in range(self.n_repl):
             mf.axs[0].plot(
                 self.time_min.stk(f),
-                self.temp.stk(f),
+                self.temp_u.stk(f),
                 color=colors[f],
                 linestyle=linestyles[f],
                 label=self.filenames[f],
