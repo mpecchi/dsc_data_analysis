@@ -838,8 +838,7 @@ class Sample:
         This analysis calculates moisture content, ash content, volatile matter, and fixed carbon
         based on the thermogravimetric data. The results are stored in the instance's attributes for later use.
         """
-        if not self.files_loaded:
-            self.indexes_from_segments()
+        self.indexes_from_segments()
         for file in self.files.values():
             self.temp.add(file["temp"].values, unit=self.column_units["temp"])
             self.time.add(file["time"].values, unit=self.column_units["time"])
@@ -1062,8 +1061,8 @@ class Sample:
         # Plot 2: Ramp + isotherm dsc
         for f in range(self.n_repl):
             mf.axs[2].plot(
-                self.temp.stk(f)[self.slice_from_segments(cp_segments)],
-                self.cp.stk(f)[self.slice_from_segments(cp_segments)],
+                self.temp.stk(f).magnitude[self.slice_from_segments(cp_segments)],
+                self.cp.stk(f).magnitude[self.slice_from_segments(cp_segments)],
                 color=colors[f],
                 linestyle=linestyles[f],
                 label=self.filenames[f],
