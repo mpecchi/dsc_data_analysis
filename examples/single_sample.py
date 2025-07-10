@@ -72,3 +72,11 @@ mf = proj.plot_all(
 )
 
 # %%
+
+a.compute_cp_equation(
+    plot_fit=True,
+)
+b.compute_cp_equation(
+    plot_fit=True,
+)
+# %%
